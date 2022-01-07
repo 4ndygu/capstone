@@ -54,6 +54,7 @@ def update_postgres_env(db='capdb'):
                 'model': CaseMetadata,
                 'case_field': 'id',
                 'fields': [
+                    'search',
                     'name',
                     'name_abbreviation',
                     'decision_date_original',

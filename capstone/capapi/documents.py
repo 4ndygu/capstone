@@ -76,15 +76,16 @@ class RawSearch(Search):
 class CaseDocument(Document):
     # IMPORTANT: If you change what values are indexed here, also change the "CaseLastUpdate triggers"
     # section in set_up_postgres.py to keep Elasticsearch updated.
-    name_abbreviation = SuggestField(analyzer='english')
-    name = fields.TextField(index_phrases=True, analyzer='english')
+    search = FTSField()
+    name_abbreviation = SuggestField(analyzer='english', copy_to='search')
+    name = fields.TextField(index_phrases=True, analyzer='english', copy_to='search')
     frontend_url = fields.KeywordField()
     frontend_pdf_url = fields.KeywordField()
     last_page = fields.KeywordField()
     first_page = fields.KeywordField()
     decision_date_original = fields.KeywordField()
     docket_numbers = fields.TextField(multi=True)
-    docket_number = fields.TextField()
+    docket_number = fields.TextField(copy_to='search')
     last_updated = fields.KeywordField()
 
     volume = fields.ObjectField(properties={
@@ -105,7 +106,7 @@ class CaseDocument(Document):
     court = fields.ObjectField(properties={
         "id": fields.IntegerField(),
         "slug": fields.KeywordField(),
-        "name": fields.TextField(),
+        "name": fields.TextField(copy_to='search'),
         "name_abbreviation": SuggestField(),
     })
 
@@ -120,7 +121,7 @@ class CaseDocument(Document):
         "id": fields.IntegerField(),
         "slug": fields.KeywordField(),
         "name": fields.KeywordField(),
-        "name_long": SuggestField(),
+        "name_long": SuggestField(copy_to='search'),
         "whitelisted": fields.BooleanField()
     })
 
@@ -132,8 +133,8 @@ class CaseDocument(Document):
             'judges': fields.TextField(multi=True),
             'parties': fields.TextField(multi=True),
             'opinions': fields.NestedField(multi=True, properties={
-                'author': FTSField(),
-                'text': FTSField(),
+                'author': FTSField(copy_to='search'),
+                'text': FTSField(copy_to='search'),
                 'type': fields.KeywordField(),
                 'extracted_citations': fields.NestedField(properties={
                     "cite": fields.KeywordField(),
@@ -171,8 +172,6 @@ class CaseDocument(Document):
     })
 
     restricted = fields.BooleanField()
-
-    search = FTSField()
 
     def prepare_provenance(self, instance):
         return {
@@ -226,27 +225,6 @@ class CaseDocument(Document):
     def prepare_name_abbreviation(self, instance):
         return instance.redact_obj(instance.name_abbreviation)
 
-    def prepare_search(self, instance):
-        # It seems more efficient to pull the search fields manually, 
-        # as casebody and jurisdiction data is extracted differently 
-        # from the other fields.
-        text_body = self.prepare_casebody_data(instance)['text']
-        
-        text_set = ' '.join(["{} {}".format(blob['author'],blob['text']) 
-            for blob in text_body['opinions']])
-
-        filter_set = [
-            self.prepare_name(instance),
-            self.prepare_name_abbreviation(instance),
-            instance.docket_number,
-            instance.jurisdiction.name_long,
-            instance.court.name,
-            text_set,
-            text_body['corrections'],
-        ]
-
-        return ' '.join(filter_set)
-
     class Django:
         model = CaseMetadata
         fields = [
@@ -267,6 +245,8 @@ class CaseDocument(Document):
         doc['jurisdiction'] = self.jurisdiction.to_dict(skip_empty=skip_empty)
         doc['casebody_data']['text'] = self.casebody_data.text.to_dict(skip_empty=skip_empty)
         doc['casebody_data']['text']['opinions'] = [ op.to_dict(skip_empty=skip_empty) for op in self.casebody_data['text'].opinions ]
+        raise Exception(doc.keys())
+        del doc['search']
         return doc
 
     def full_cite(self):
@@ -284,6 +264,9 @@ class CaseDocument(Document):
         out = super().search(*args, **kwargs)
         out.__class__ = RawSearch
         return out
+
+    def update(self, thing, refresh=None, action='index', parallel=False, **kwargs):
+        return super().update(thing, refresh, action, parallel, **kwargs)
 
 
 @resolve_index.doc_type
